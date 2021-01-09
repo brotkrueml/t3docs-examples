@@ -10,26 +10,24 @@ defined('TYPO3_MODE') or die();
 
 // Add a "no print" checkbox
 // USAGE: TCA Reference >  $TCA array reference > Extending the $TCA array
-$temporaryColumn = [
-    'tx_examples_noprint' => [
-        'exclude' => 0,
-        'label' => 'LLL:EXT:examples/Resources/Private/Language/locallang_db.xlf:tt_content.tx_examples_noprint',
-        'config' => [
-            'type' => 'check',
-            'renderType' => 'checkboxToggle',
-            'items' => [
-                [
-                    0 => '',
-                    1 => ''
-                ]
-            ],
-        ],
-    ],
-];
-
 \TYPO3\CMS\Core\Utility\ExtensionManagementUtility::addTCAcolumns(
     'tt_content',
-    $temporaryColumn
+    [
+        'tx_examples_noprint' => [
+            'exclude' => 0,
+            'label' => 'LLL:EXT:examples/Resources/Private/Language/locallang_db.xlf:tt_content.tx_examples_noprint',
+            'config' => [
+                'type' => 'check',
+                'renderType' => 'checkboxToggle',
+                'items' => [
+                    [
+                        0 => '',
+                        1 => ''
+                    ]
+                ],
+            ],
+        ],
+    ]
 );
 
 \TYPO3\CMS\Core\Utility\ExtensionManagementUtility::addFieldsToPalette(
