@@ -3,19 +3,8 @@
 <f:layout name="Module" />
 
 <f:section name="Content">
-   <f:flashMessages/>
-
-   <h1>
-      <f:translate key="function_debug"/>
-   </h1>
-
-   <p>
-      <f:translate key="function_debug_intro"/>
-   </p>
-   <f:form action="debug" name="debuggingForm" method="post">
-      <f:form.button name="cmd" value="cookies" type="submit" class="btn btn-primary">
-         <f:translate key="function_debug_cookies"/>
-      </f:form.button>
-   </f:form>
+   <h1><f:translate key="function_debug" extensionName="examples"/></h1>
+   <p><f:translate key="function_debug_intro" extensionName="examples"/></p>
+   <p><f:debug inline="1">{cookies}</f:debug></p>
 </f:section>
 </html>

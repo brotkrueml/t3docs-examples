@@ -18,30 +18,20 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerAwareTrait;
-use TYPO3\CMS\Backend\Clipboard\Clipboard;
+use TYPO3\CMS\Backend\Template\Components\ButtonBar;
 use TYPO3\CMS\Backend\Template\ModuleTemplate;
 use TYPO3\CMS\Backend\Template\ModuleTemplateFactory;
-use TYPO3\CMS\Backend\Tree\View\PageTreeView;
 use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Localization\LanguageService;
-use TYPO3\CMS\Core\Type\Bitmask\Permission;
 use TYPO3\CMS\Core\Utility\DebugUtility;
-use TYPO3\CMS\Core\Database\Connection;
-use TYPO3\CMS\Core\Database\ConnectionPool;
-use TYPO3\CMS\Core\DataHandling\DataHandler;
-use TYPO3\CMS\Core\Imaging\Icon;
 use TYPO3\CMS\Core\Imaging\IconFactory;
 use TYPO3\CMS\Core\Log\LogLevel;
-use TYPO3\CMS\Core\Messaging\FlashMessage;
-use TYPO3\CMS\Core\Resource\FileRepository;
-use TYPO3\CMS\Core\Resource\ResourceFactory;
-use TYPO3\CMS\Core\Utility\GeneralUtility;
-use TYPO3\CMS\Extbase\Mvc\Controller\ActionController;
-use TYPO3\CMS\Extbase\Mvc\Web\Routing\UriBuilder;
-use TYPO3\CMS\Extbase\Utility\LocalizationUtility;
 use TYPO3\CMS\Core\Crypto\PasswordHashing\PasswordHashFactory;
 use TYPO3\CMS\Core\Configuration\ExtensionConfiguration;
+use TYPO3\CMS\Core\Messaging\FlashMessage;
+use TYPO3\CMS\Core\Messaging\FlashMessageService;
+use TYPO3\CMS\Core\Utility\GeneralUtility;
 
 /**
  * Controller for the backend module
@@ -50,85 +40,116 @@ use TYPO3\CMS\Core\Configuration\ExtensionConfiguration;
  * @package TYPO3
  * @subpackage tx_examples
  */
-class AdminModuleController extends ActionController implements LoggerAwareInterface
+class AdminModuleController implements LoggerAwareInterface
 {
     use LoggerAwareTrait;
 
     protected array $exampleConfig = [];
 
+    /**
+     * The module menu items array.
+     */
+    protected array $MOD_MENU = [];
+
+    /**
+     * Current settings for the keys of the MOD_MENU array.
+     */
+    protected array $MOD_SETTINGS = [];
+
     public function __construct(
         protected readonly ModuleTemplateFactory $moduleTemplateFactory,
         protected readonly IconFactory $iconFactory,
         protected readonly ExtensionConfiguration $extensionConfiguration,
-        protected readonly PasswordHashFactory $passwordHashFactory
+        protected readonly PasswordHashFactory $passwordHashFactory,
+        protected readonly \TYPO3\CMS\Backend\Routing\UriBuilder $uriBuilder,
+        protected readonly FlashMessageService $flashMessageService,
     ) {
     }
 
-    /**
-     * Generates the action menu
-     */
-    protected function initializeModuleTemplate(ServerRequestInterface $request): ModuleTemplate
+    public function handleRequest(ServerRequestInterface $request): ResponseInterface
     {
-        $menuItems = [
-            'log' => [
-                'controller' => 'AdminModule',
-                'action' => 'log',
-                'label' => $this->getLanguageService()->sL('LLL:EXT:examples/Resources/Private/Language/AdminModule/locallang.xlf:module.menu.log'),
-            ],
-            'debug' => [
-                'controller' => 'AdminModule',
-                'action' => 'debug',
-                'label' => $this->getLanguageService()->sL('LLL:EXT:examples/Resources/Private/Language/AdminModule/locallang.xlf:module.menu.debug'),
-            ],
-            'password' => [
-                'controller' => 'AdminModule',
-                'action' => 'password',
-                'label' => $this->getLanguageService()->sL('LLL:EXT:examples/Resources/Private/Language/AdminModule/locallang.xlf:module.menu.password'),
-            ],
-        ];
+        $languageService = $this->getLanguageService();
+        $languageService->includeLLFile('EXT:examples/Resources/Private/Language/AdminModule/locallang.xlf');
 
-        $view = $this->moduleTemplateFactory->create($request, 't3docs/examples');
+        $this->menuConfig($request);
+        $moduleTemplate = $this->moduleTemplateFactory->create($request, 't3docs/examples');
+        $this->setUpDocHeader($moduleTemplate);
 
-        $menu = $view->getDocHeaderComponent()->getMenuRegistry()->makeMenu();
-        $menu->setIdentifier('ExampleAdminModuleMenu');
-
-        $context = '';
-        foreach ($menuItems as $menuItemConfig) {
-            $isActive = $this->request->getControllerActionName() === $menuItemConfig['action'];
-            $menuItem = $menu->makeMenuItem()
-                ->setTitle($menuItemConfig['label'])
-                ->setHref($this->uriBuilder->reset()->uriFor($menuItemConfig['action'], [], $menuItemConfig['controller']))
-                ->setActive($isActive);
-            $menu->addMenuItem($menuItem);
-            if ($isActive) {
-                $context = $menuItemConfig['label'];
-            }
+        $title = $languageService->sL('LLL:EXT:examples/Resources/Private/Language/AdminModule/locallang_mod.xlf:mlang_tabs_tab');
+        switch ($this->MOD_SETTINGS['function']) {
+            case 'debug':
+                $moduleTemplate->setTitle($title, $languageService->getLL('module.menu.debug'));
+                return $this->debugAction($moduleTemplate, $request);
+            case 'password':
+                $moduleTemplate->setTitle($title, $languageService->getLL('module.menu.password'));
+                return $this->passwordAction($moduleTemplate, $request);
+            default:
+                $moduleTemplate->setTitle($title, $languageService->getLL('module.menu.log'));
+                return $this->logAction($moduleTemplate);
         }
-
-        $view->getDocHeaderComponent()->getMenuRegistry()->addMenu($menu);
-
-        $view->setTitle(
-            $this->getLanguageService()->sL('LLL:EXT:examples/Resources/Private/Language/AdminModule/locallang_mod.xlf:mlang_tabs_tab'),
-            $context
-        );
-
-        $permissionClause = $this->getBackendUserAuthentication()->getPagePermsClause(Permission::PAGE_SHOW);
-        $pageRecord = BackendUtility::readPageAccess($this->pageUid, $permissionClause);
-        if ($pageRecord) {
-            $view->getDocHeaderComponent()->setMetaInformation($pageRecord);
-        }
-        $view->setFlashMessageQueue($this->getFlashMessageQueue());
-
-        return $view;
     }
 
     /**
-     * Function will be called before every other action
+     * Configure menu
      */
-    protected function initializeAction()
+    protected function menuConfig(ServerRequestInterface $request): void
     {
-        $this->exampleConfig = $this->extensionConfiguration->get('examples') ?? [];
-        parent::initializeAction();
+        $lang = $this->getLanguageService();
+        $parsedBody = $request->getParsedBody();
+        $queryParams = $request->getQueryParams();
+
+        $this->MOD_MENU = [
+            'function' => [
+                0 => htmlspecialchars($lang->getLL('module.menu.log')),
+                'debug' => htmlspecialchars($lang->getLL('module.menu.debug')),
+                'password' => htmlspecialchars($lang->getLL('module.menu.password')),
+            ],
+        ];
+        // CLEAN SETTINGS
+        $this->MOD_SETTINGS = BackendUtility::getModuleData($this->MOD_MENU, $parsedBody['SET'] ?? $queryParams['SET'] ?? [], 'admin_examples', 'ses');
+    }
+
+    private function setUpShortcutButton(ModuleTemplate $moduleTemplate): void {
+        $buttonBar = $moduleTemplate->getDocHeaderComponent()->getButtonBar();
+        $shortCutButton = $buttonBar->makeShortcutButton()
+            ->setRouteIdentifier('admin_examples')
+            ->setDisplayName($this->MOD_MENU['function'][$this->MOD_SETTINGS['function']])
+            ->setArguments([
+                'SET' => [
+                    'function' => $this->MOD_SETTINGS['function'] ?? ''
+                ],
+            ]);
+        $buttonBar->addButton($shortCutButton, ButtonBar::BUTTON_POSITION_RIGHT, 2);
+    }
+    /**
+     * Generate doc header drop-down and shortcut button.
+     */
+    protected function setUpDocHeader(ModuleTemplate $moduleTemplate): void
+    {
+        $this->setUpShortcutButton($moduleTemplate);
+        $menu = $moduleTemplate->getDocHeaderComponent()->getMenuRegistry()->makeMenu();
+        $menu->setIdentifier('AdminExampleJumpMenu');
+        foreach ($this->MOD_MENU['function'] as $controller => $title) {
+            $item = $menu
+                ->makeMenuItem()
+                ->setHref(
+                    (string)$this->uriBuilder->buildUriFromRoute(
+                        'admin_examples',
+                        [
+                            'id' => 0,
+                            'SET' => [
+                                'function' => $controller,
+                            ],
+                        ]
+                    )
+                )
+                ->setTitle($title);
+            if ($controller === $this->MOD_SETTINGS['function']) {
+                $item->setActive(true);
+            }
+            $menu->addMenuItem($item);
+        }
+        $moduleTemplate->getDocHeaderComponent()->getMenuRegistry()->addMenu($menu);
     }
 
     /**
@@ -136,7 +157,7 @@ class AdminModuleController extends ActionController implements LoggerAwareInter
      * $this->logger gets set by usage of the LoggerAwareTrait
      *
      */
-    public function logAction(): ResponseInterface
+    public function logAction(ModuleTemplate $view): ResponseInterface
     {
         $this->logger->info('Everything went fine.');
         $this->logger->warning('Something went awry, check your configuration!');
@@ -151,21 +172,24 @@ class AdminModuleController extends ActionController implements LoggerAwareInter
             LogLevel::CRITICAL,
             'This is an utter failure!'
         );
-        $this->addFlashMessage(
+        $message = new FlashMessage(
             '3 log entries created',
             '',
-            FlashMessage::INFO
+            FlashMessage::INFO,
+            true
         );
-        $view = $this->initializeModuleTemplate($this->request);
-        return $view->renderResponse();
+        $messageQueue = $this->flashMessageService->getMessageQueueByIdentifier();
+        $messageQueue->addMessage($message);
+        return $view->renderResponse('AdminModule/Log');
     }
 
     /**
-     * Displays the content of the clipboard
+     * Displays the content of $_COOKIE
      *
      */
     public function debugAction(
-        string $cmd = 'cookies'
+        ModuleTemplate $view,
+        ServerRequestInterface $request
     ): ResponseInterface
     {
         $cmd = $_POST['tx_examples_admin_examples']['cmd'];
@@ -175,8 +199,13 @@ class AdminModuleController extends ActionController implements LoggerAwareInter
                 break;
         }
 
-        $view = $this->initializeModuleTemplate($this->request);
-        return $view->renderResponse();
+        $view->assignMultiple(
+            [
+                'cookies' => $_COOKIE,
+                'lastcommand' => $cmd,
+            ]
+        );
+        return $view->renderResponse('AdminModule/Debug');
     }
 
     protected function debugCookies() {
@@ -197,8 +226,12 @@ class AdminModuleController extends ActionController implements LoggerAwareInter
     /**
      * checks or compares the password
      */
-    public function passwordAction(string $passwordAction = 'get', string $password = 'joh316', string $hashedPassword = '', string $mode = 'FE'): ResponseInterface
+    public function passwordAction(ModuleTemplate $view, ServerRequestInterface $request): ResponseInterface
     {
+        $passwordAction = 'get';
+        $password = 'joh316';
+        $hashedPassword = '';
+        $mode = 'FE';
         $modes = ['FE' => 'FE', 'BE' => 'BE'];
         if ($passwordAction == 'Check') {
             $success = $this->checkPassword($hashedPassword, $password, $mode);
@@ -206,7 +239,6 @@ class AdminModuleController extends ActionController implements LoggerAwareInter
             $hashedPassword = $this->getPasswordHash($password, $mode);
             $success = true;
         }
-        $view = $this->initializeModuleTemplate($this->request);
         $view->assignMultiple(
             [
                 'modes' => $modes,
@@ -217,13 +249,7 @@ class AdminModuleController extends ActionController implements LoggerAwareInter
                 'passwordAction' => $passwordAction
             ]
         );
-        return $view->renderResponse();
-    }
-
-
-    protected function getBackendUserAuthentication(): BackendUserAuthentication
-    {
-        return $GLOBALS['BE_USER'];
+        return $view->renderResponse('AdminModule/Password');
     }
 
     protected function getLanguageService(): LanguageService
